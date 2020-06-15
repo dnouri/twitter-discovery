@@ -16,7 +16,12 @@ install_requires = [
     'tqdm',
     ]
 
-test_requires = []
+test_requires = [
+    'pytest',
+    'pytest-cov',
+    'pytest-flakes',
+    'pytest-pep8',
+    ]
 
 
 here = os.path.abspath(os.path.dirname(__file__))
