@@ -1,3 +1,4 @@
+from datetime import datetime
 import hashlib
 import logging
 from multiprocessing.pool import ThreadPool
@@ -7,6 +8,7 @@ import random
 from time import time
 from urllib.parse import urlparse
 
+import arxiv
 from newspaper import Article
 import nltk
 import requests
@@ -36,6 +38,25 @@ ARTICLE_KEYS = [
     ]
 
 
+def extract_arxiv_article(url):
+    arxiv_id = url.split('/')[4].replace('.pdf', '')
+    result = tuple(arxiv.query(
+        id_list=[arxiv_id],
+        max_results=1,
+        ))[0]
+    html = '' if url.endswith('.pdf') else requests.get(url).text
+    return {
+        'url': f'https://arxiv.org/abs/{arxiv_id}',
+        'title': result['title'],
+        'text': result['summary'],
+        'html': html,
+        'authors': result['authors'],
+        'publish_date': datetime.strptime(
+            result['published'], "%Y-%m-%dT%H:%M:%S%z").replace(tzinfo=None),
+        'summary': result['summary'],
+        }
+
+
 def extract_newspaper_article(url):
     article = Article(
         url,
@@ -48,6 +69,20 @@ def extract_newspaper_article(url):
     return {
         key: getattr(article, key) for key in ARTICLE_KEYS
         }
+
+
+extractors = [
+    (
+        lambda url, ctype:
+        url.startswith('https://arxiv.org/abs/') or
+        url.startswith('https://arxiv.org/pdf/'),
+        extract_arxiv_article,
+    ),
+    (
+        lambda url, ctype: ctype.split(';')[0] == 'text/html',
+        extract_newspaper_article,
+    ),
+]
 
 
 def extract_article(url, timeout_head=10):
@@ -70,12 +105,11 @@ def extract_article(url, timeout_head=10):
         article_info['error'] = str(exc)
         return article_info
 
-    content_type = resp.headers.get('Content-Type', 'n/a')
-    extractor = {
-        'text/html': extract_newspaper_article,
-        }.get(content_type.split(';')[0])
-    if extractor is None:
-        error = f'No extractor for {content_type}'
+    for checker, extractor in extractors:
+        if checker(url, resp.headers.get('Content-Type', 'n/a')):
+            break
+    else:
+        error = f'No extractor for {resp.headers}'
         logger.error(f'Failed to process {url}:')
         logger.error(error)
         logger.error('\n\n')
@@ -114,14 +148,16 @@ def extract_articles(urls, n_threads):
         pool.imap_unordered(extract_article, urls),
         total=len(urls),
         )
-    for article in iterator:
+    good = 0
+    for count, article in enumerate(iterator, start=1):
         articles.append(article)
-
+        if 'error' not in article:
+            good += 1
         url_abbr = article['url'].split('//', 1)[1]
         if len(url_abbr) > 30:
             url_abbr = url_abbr[:20] + '...' + url_abbr[-7:]
         iterator.set_description(
-            'extract_articles: ' +
+            f'[{good}/{count}] extract_articles: ' +
             ('[err] ' if 'error' in article else '') +
             url_abbr
             )

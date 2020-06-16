@@ -7,6 +7,7 @@ version = '0.1a.dev'
 
 install_requires = [
     'altair',
+    'arxiv',
     'click',
     'newspaper3k',
     'pandas',
