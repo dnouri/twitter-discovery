@@ -9,10 +9,10 @@ import click
 import pandas
 import streamlit as st
 
-from .extract import extract_articles_in_chunks
+from twidis.extract import extract_articles_in_chunks
 
 
-logging.basicConfig(filename='twidis.log', level=logging.DEBUG)
+logging.basicConfig(filename='twidis.log', level=logging.INFO)
 
 
 @click.group()
@@ -150,9 +150,10 @@ def _read_csv(fname):
 @click.option('--max-articles-display', default=500)
 def gui_cli(infile, max_articles_display):
     st.title("Twitter Discovery")
-    st.write("Search articles referenced from"
+    st.write("Search articles referenced from "
              "your tweets, retweets, and favorites.")
     af = _read_csv(infile)
+    af = af.drop_duplicates(['url'])
     af.sort_values('tweet_created_at', ascending=False, inplace=True)
 
     query_text = st.text_input("Search")
@@ -181,12 +182,15 @@ def gui_cli(infile, max_articles_display):
             col: af[col].fillna('').str.lower()
             for col in [
                 'title',
+                'authors',
                 'text',
                 'tweet_full_text',
                 'tweet_user_screen_name',
                 'tweet_user_name',
                 ]
             }
+        to_search['authors'] = to_search['authors'].apply(
+            lambda authors: ' '.join(eval(authors) if authors else []))
         to_search['tweet_user_screen_name'] = '@' + to_search[
             'tweet_user_screen_name']
 
@@ -221,8 +225,8 @@ def gui_cli(infile, max_articles_display):
     af_chart['retweets'] = af_chart['tweet_retweet_count'].clip(1)
     chart = alt.Chart(
         af_chart,
-        width=min(len(af) * 60, 600),
-        height=min(len(af) * 40, 400),
+        width=max(min(len(af) * 60, 600), 300),
+        height=max(min(len(af) * 40, 400), 200),
     ).mark_circle(size=60).encode(
         x='tweet_created_at',
         y=alt.X('retweets', scale=alt.Scale(type='log')),
@@ -244,21 +248,23 @@ def gui_cli(infile, max_articles_display):
 
     af = af[:max_articles_display]
     for index, article in af.iterrows():
+        article_title = article['title'].replace('\n', ' ')
+        tweet_full_text = article['tweet_full_text'].replace('\n', '<br/>')
         favicon_html = (
             f"<img "
             f"src='{article.url_scheme}://{article.url_netloc}/favicon.ico' "
             f"width='24px'>"
             )
         st.markdown(
-            f"### {favicon_html} [{article.title}]({article.url}) "
+            f"### {favicon_html} [{article_title}]({article.url}) "
             f"<small>({article.url_netloc})</small>",
             unsafe_allow_html=True,
             )
         st.markdown(
             f"[@{article.tweet_user_screen_name} on "
             f"{article.tweet_created_at.strftime('%Y-%m-%d')}]"
-            f"({article.tweet_url}): "
-            f"<q>{article.tweet_full_text}</q>",
+            f"({article.tweet_url}):<br/>"
+            f"<q>{tweet_full_text}</q>",
             unsafe_allow_html=True,
             )
 
